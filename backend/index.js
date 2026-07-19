@@ -9,6 +9,7 @@ import requireAuthPage from "./middlewares/requireAuth.js";
 import rateLimit from "express-rate-limit";
 
 const app = express();
+app.use(cors({origin:'https://personal-journal.aishvary.dev',credentials:true}));
 app.use(express.json());
 app.use(cookieParser());
 
@@ -113,7 +114,7 @@ app.post("/api/login", loginLimiter, async (req, res) => {
 
   // Password is correct, create a session token
   const token = createSession();
-  res.cookie("session", token, { httpOnly: true,secure:process.env.NODE_ENV === "production", maxAge: SEVEN_DAYS_MS,sameSite:'lax',path:'/' }); // 7 days
+  res.cookie("session", token, { httpOnly: true,secure:process.env.NODE_ENV === "production", maxAge: SEVEN_DAYS_MS,sameSite:'lax',path:'/',domain: process.env.NODE_ENV === "production" ? ".personal-journal.aishvary.dev" : undefined }); // 7 days
   res.json({ ok: true });
 });
 
