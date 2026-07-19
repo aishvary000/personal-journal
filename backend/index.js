@@ -7,6 +7,7 @@ import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import {createSession, destroySession, getSession, SEVEN_DAYS_MS} from "./utils/session.js";
 import requireAuthPage from "./middlewares/requireAuth.js";
 import rateLimit from "express-rate-limit";
+import cors from "cors";
 
 const app = express();
 app.use(cors({origin:'https://personal-journal.aishvary.dev',credentials:true}));
