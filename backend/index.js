@@ -113,7 +113,7 @@ app.post("/api/login", loginLimiter, async (req, res) => {
 
   // Password is correct, create a session token
   const token = createSession();
-  res.cookie("session", token, { httpOnly: true, maxAge: SEVEN_DAYS_MS,sameSite:'lax',path:'/' }); // 7 days
+  res.cookie("session", token, { httpOnly: true,secure:process.env.NODE_ENV === "production", maxAge: SEVEN_DAYS_MS,sameSite:'lax',path:'/' }); // 7 days
   res.json({ ok: true });
 });
 
