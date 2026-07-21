@@ -8,11 +8,21 @@ import {createSession, destroySession, getSession, SEVEN_DAYS_MS} from "./utils/
 import requireAuthPage from "./middlewares/requireAuth.js";
 import rateLimit from "express-rate-limit";
 import cors from "cors";
+import { photosInRangeHandler } from './routes/photosInRangeHandler.js';
+import path from 'path';
+import { fileURLToPath } from 'url'
+ const __filename = fileURLToPath(import.meta.url) 
+ const __dirname = path.dirname(__filename)
+
 
 const app = express();
+app.options('*', cors({ origin: 'http://localhost:5173', credentials: true }))
 app.use(cors({origin:'https://personal-journal.aishvary.dev',credentials:true}));
+app.use(cors({origin:'http://localhost:5173',credentials:true}));
 app.use(express.json());
 app.use(cookieParser());
+app.use(express.static(path.join(__dirname, '../frontend/dist')))
+
 
 const {
   B2_KEY_ID,
@@ -61,8 +71,7 @@ function isValidKey(key) {
 
 app.get("/api/health", (req, res) => res.json({ ok: true }));
 
-// POST /presign-upload  { key: "camera/2026-07-13/IMG_0001.jpg", contentType: "image/jpeg" }
-// -> { uploadUrl, expiresIn }
+
 app.post("/api/presign-upload", requireApiKey, async (req, res) => {
   const { key, contentType } = req.body || {};
 
@@ -82,7 +91,6 @@ app.post("/api/presign-upload", requireApiKey, async (req, res) => {
 
     const expiresIn = 300; // 5 minutes -- plenty for a mobile upload to start
     const uploadUrl = await getSignedUrl(s3, command, { expiresIn });
-    console.log("url", uploadUrl);
 
     res.json({ uploadUrl, expiresIn, key });
   } catch (err) {
@@ -102,6 +110,7 @@ app.post("/api/presign-upload", requireApiKey, async (req, res) => {
 app.post("/api/login", loginLimiter, async (req, res) => {
 
   const { password } = req.body || {};
+  console.log("password",password);
   if (typeof password !== "string" || password.length === 0) {
     return res.status(400).json({ error: "password required" });
   }
@@ -115,12 +124,13 @@ app.post("/api/login", loginLimiter, async (req, res) => {
 
   // Password is correct, create a session token
   const token = createSession();
-  res.cookie("session", token, { httpOnly: true,secure:process.env.NODE_ENV === "production", maxAge: SEVEN_DAYS_MS,sameSite:'lax',path:'/',domain: process.env.NODE_ENV === "production" ? ".personal-journal.aishvary.dev" : undefined }); // 7 days
+  res.set('cache-control','no-store');
+  console.log("token is : ",token);
+  res.cookie("session", token, { httpOnly: true,secure:process.env.NODE_ENV === "production", maxAge: SEVEN_DAYS_MS,sameSite:'lax',path:'/' }); // 7 days
   res.json({ ok: true });
 });
 
 app.post("/api/upload-file", requireAuthPage, (req, res) => {
-  // Handle file upload logic here
   res.json({ ok: true });
 });
 
@@ -139,6 +149,12 @@ app.post("/api/logout", (req, res) => {
   }
   res.json({ ok: true });
 });
+
+app.get('/api/photos', requireAuthPage, photosInRangeHandler);
+
+
+// fallback for client-side routing (React Router etc.) 
+app.get('*', (req, res) => { res.sendFile(path.join(__dirname, '../frontend/dist/index.html')) })
 
 app.listen(PORT, () => {
   console.log(`Presign server listening on port ${PORT}`);

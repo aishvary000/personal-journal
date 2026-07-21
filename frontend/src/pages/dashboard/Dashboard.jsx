@@ -1,4 +1,5 @@
 import { useNavigate } from 'react-router-dom';
+import { apiFetch } from '../../utils/fetch-api';
 
 const FONT_MONO = "'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace";
 
@@ -6,7 +7,7 @@ export default function Dashboard() {
   const navigate = useNavigate();
 
   async function handleLogout() {
-    await fetch('/api/logout', { method: 'POST', credentials: 'include' });
+    await apiFetch('/api/logout', { method: 'POST', credentials: 'include' });
     navigate('/login', { replace: true });
   }
 

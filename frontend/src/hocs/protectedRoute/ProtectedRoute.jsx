@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Navigate } from 'react-router-dom';
+import { apiFetch } from '../../utils/fetch-api';
 
 // Wrap any route element with this to require an authenticated session:
 //   <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
@@ -13,8 +14,10 @@ export default function ProtectedRoute({ children }) {
   useEffect(() => {
     let cancelled = false;
 
-    fetch('/api/me', { credentials: 'include' })
-      .then((res) => res.json())
+    apiFetch('/api/me')
+      .then((res) => {
+        return res;
+      })
       .then((data) => {
         if (!cancelled) setStatus(data.authenticated ? 'authed' : 'unauthed');
       })

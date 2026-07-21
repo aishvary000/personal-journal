@@ -1,6 +1,7 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { apiFetch } from '../../utils/fetch-api';
 
 export default function LoginPage() {
   const [password, setPassword] = useState('');
@@ -19,23 +20,21 @@ export default function LoginPage() {
     setError('');
 
     try {
-      const res = await fetch('/api/login', {
+      const res = await apiFetch('/api/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
         body: JSON.stringify({ password }),
       });
-      const data = await res.json();
-      console.log('Login response data:', data); // Log the response data for debugging
-      console.log('Login response:', res); // Log the response object for debugging
-      if (data.ok) {
+      if (res.ok) {
         navigate('/dashboard', { replace: true });
       } else {
         setError('access denied — wrong password');
         setPassword('');
         inputRef.current?.focus();
       }
-    } catch {
+    } catch(err) {
+      console.log("error",err);
       console.error('Error during login request'); // Log an error message for debugging
       setError('could not reach server');
     } finally {
