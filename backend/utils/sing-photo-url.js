@@ -8,5 +8,5 @@ export function signPhotoUrl(b2Key, expiresInSeconds = 300) {
     .update(payload)
     .digest('hex');
 
-  return `https://photos.personal-journal.aishvary.dev/sign-photo/${b2Key}?expires=${expires}&sig=${signature}`;
+  return `https://photos.aishvary.dev/${b2Key}?expires=${expires}&sig=${signature}`;
 }

@@ -12,10 +12,10 @@ import { photosInRangeHandler } from './routes/photosInRangeHandler.js';
 
 
 const app = express();
-app.options('*', cors({ origin: 'http://localhost:5173', credentials: true }))
-app.options('*', cors({ origin: 'https://personal-journal.aishvary.dev', credentials: true }))
-app.use(cors({origin:'https://personal-journal.aishvary.dev',credentials:true}));
-app.use(cors({origin:'http://localhost:5173',credentials:true}));
+
+const corsOptions = { origin: ['https://personal-journal.aishvary.dev', 'http://localhost:5173'], credentials: true, }; 
+app.options('*', cors(corsOptions)); 
+app.use(cors(corsOptions));
 app.use(express.json());
 app.use(cookieParser());
 
@@ -106,7 +106,6 @@ app.post("/api/presign-upload", requireApiKey, async (req, res) => {
 app.post("/api/login", loginLimiter, async (req, res) => {
 
   const { password } = req.body || {};
-  console.log("password",password);
   if (typeof password !== "string" || password.length === 0) {
     return res.status(400).json({ error: "password required" });
   }
@@ -121,7 +120,6 @@ app.post("/api/login", loginLimiter, async (req, res) => {
   // Password is correct, create a session token
   const token = createSession();
   res.set('cache-control','no-store');
-  console.log("token is : ",token);
   res.cookie("session", token, { httpOnly: true,secure:process.env.NODE_ENV === "production", maxAge: SEVEN_DAYS_MS,sameSite:'lax',path:'/' }); // 7 days
   res.json({ ok: true });
 });
