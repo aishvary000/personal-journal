@@ -9,10 +9,6 @@ import requireAuthPage from "./middlewares/requireAuth.js";
 import rateLimit from "express-rate-limit";
 import cors from "cors";
 import { photosInRangeHandler } from './routes/photosInRangeHandler.js';
-import path from 'path';
-import { fileURLToPath } from 'url'
- const __filename = fileURLToPath(import.meta.url) 
- const __dirname = path.dirname(__filename)
 
 
 const app = express();
@@ -22,7 +18,6 @@ app.use(cors({origin:'https://personal-journal.aishvary.dev',credentials:true}))
 app.use(cors({origin:'http://localhost:5173',credentials:true}));
 app.use(express.json());
 app.use(cookieParser());
-app.use(express.static(path.join(__dirname, '../frontend/dist')))
 
 
 const {
@@ -154,8 +149,6 @@ app.post("/api/logout", (req, res) => {
 app.get('/api/photos', requireAuthPage, photosInRangeHandler);
 
 
-// fallback for client-side routing (React Router etc.) 
-app.get('*', (req, res) => { res.sendFile(path.join(__dirname, '../frontend/dist/index.html')) })
 
 app.listen(PORT, () => {
   console.log(`Presign server listening on port ${PORT}`);
