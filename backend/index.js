@@ -13,6 +13,8 @@ import { photosInRangeHandler } from './routes/photosInRangeHandler.js';
 
 const app = express();
 
+app.set('trust proxy',1);
+
 const corsOptions = { origin: ['https://personal-journal.aishvary.dev', 'http://localhost:5173'], credentials: true, }; 
 app.options('*', cors(corsOptions)); 
 app.use(cors(corsOptions));
