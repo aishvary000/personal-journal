@@ -10,6 +10,7 @@ import rateLimit from "express-rate-limit";
 import cors from "cors";
 import { photosInRangeHandler } from './routes/photosInRangeHandler.js';
 import { thumbnailWebhookHandler } from "./routes/generate-thumbnail.js";
+import { runThumbnailBackfillHandler } from "./routes/run-tumbnail-backfill.js";
 
 
 const app = express();
@@ -149,7 +150,9 @@ app.post("/api/logout", (req, res) => {
 
 app.get('/api/photos', requireAuthPage, photosInRangeHandler);
 
-app.post('/api/webhooks/thumbnail',express.json(),thumbnailWebhookHandler)
+app.post('/api/webhooks/thumbnail',express.json(),thumbnailWebhookHandler);
+
+app.post('/api/admin/run-thumbnail-backfill', express.json(), runThumbnailBackfillHandler);
 
 
 

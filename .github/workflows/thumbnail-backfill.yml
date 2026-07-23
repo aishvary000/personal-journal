@@ -1,0 +1,15 @@
+name: Thumbnail backfill safety net
+
+on:
+  schedule:
+    - cron: '0 3 * * *'   # daily at 3 AM UTC
+  workflow_dispatch:        # adds a "Run workflow" button in GitHub's UI, for manual triggers
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call backfill endpoint
+        run: |
+          curl -f -X POST https://api.personal-journal.aishvary.dev/api/admin/run-thumbnail-backfill \
+            -H "x-backfill-secret: ${{ secrets.BACKFILL_SECRET }}"
