@@ -4,11 +4,15 @@ import { S3Client, GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3
 import sharp from 'sharp';
 import ffmpeg from 'fluent-ffmpeg';
 import ffmpegPath from '@ffmpeg-installer/ffmpeg';
+import ffprobePath from '@ffprobe-installer/ffprobe';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
 ffmpeg.setFfmpegPath(ffmpegPath.path);
+ffmpeg.setFfprobePath(ffprobePath.path); // needed for percentage-based ('1%') timestamps —
+                                          // fluent-ffmpeg uses ffprobe to determine each
+                                          // video's duration before calculating the seek point
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
 
@@ -23,7 +27,10 @@ const s3 = new S3Client({
 
 const THUMBNAIL_WIDTH = 400;
 const PAGE_SIZE = 1000;
-const VIDEO_FRAME_TIMESTAMP = '00:00:05'; // grab the frame at 1 second in
+const VIDEO_FRAME_TIMESTAMP = '1%'; // percentage-based — scales with each video's
+                                     // actual duration, so it works even for clips
+                                     // shorter than 1 second (a fixed '00:00:01'
+                                     // fails silently on very short videos)
 
 async function streamToBuffer(stream) {
   const chunks = [];
@@ -74,6 +81,24 @@ function isVideo(key) {
 // Downloads a video to a temp file (ffmpeg needs a real file path, not a
 // buffer), extracts one frame as a JPEG, and returns that frame as a buffer.
 // Temp files are cleaned up afterward regardless of success/failure.
+async function extractFrameAt(videoPath, tmpDir, tmpFramePath, timestamp) {
+  await new Promise((resolve, reject) => {
+    ffmpeg(videoPath)
+      .on('end', resolve)
+      .on('error', reject)
+      .screenshots({
+        timestamps: [timestamp],
+        filename: path.basename(tmpFramePath),
+        folder: tmpDir,
+      });
+  });
+
+  // fluent-ffmpeg's 'end' event can fire even when no file was actually
+  // written (e.g. seeking past a very short video's duration) — verify it's
+  // really there before trusting it.
+  return fs.existsSync(tmpFramePath);
+}
+
 async function extractVideoFrame(videoBuffer) {
   const tmpDir = os.tmpdir();
   const tmpVideoPath = path.join(tmpDir, `vid-${Date.now()}.mp4`);
@@ -81,16 +106,19 @@ async function extractVideoFrame(videoBuffer) {
 
   fs.writeFileSync(tmpVideoPath, videoBuffer);
 
-  await new Promise((resolve, reject) => {
-    ffmpeg(tmpVideoPath)
-      .on('end', resolve)
-      .on('error', reject)
-      .screenshots({
-        timestamps: [VIDEO_FRAME_TIMESTAMP],
-        filename: path.basename(tmpFramePath),
-        folder: tmpDir,
-      });
-  });
+  let ok = await extractFrameAt(tmpVideoPath, tmpDir, tmpFramePath, VIDEO_FRAME_TIMESTAMP);
+
+  if (!ok) {
+    // fallback: try the very first frame, in case the percentage-based seek
+    // still landed past the end of an unusually short/malformed clip
+    console.warn('First frame extraction attempt produced no file, retrying at 0%');
+    ok = await extractFrameAt(tmpVideoPath, tmpDir, tmpFramePath, '0%');
+  }
+
+  if (!ok) {
+    fs.unlinkSync(tmpVideoPath);
+    throw new Error('ffmpeg did not produce a frame at any attempted timestamp');
+  }
 
   const frameBuffer = fs.readFileSync(tmpFramePath);
 
@@ -98,6 +126,33 @@ async function extractVideoFrame(videoBuffer) {
   fs.unlinkSync(tmpFramePath);
 
   return frameBuffer;
+}
+
+// Some phones save photos as HEIC/HEIF even with a .jpg extension — sharp's
+// prebuilt binary can't decode that format. ffmpeg has much broader format
+// support, so it's used as a fallback: convert whatever format this actually
+// is into a plain JPEG first, then hand that to sharp for resizing.
+async function convertUnknownFormatToJpeg(buffer) {
+  const tmpDir = os.tmpdir();
+  const tmpInputPath = path.join(tmpDir, `unknown-${Date.now()}`);
+  const tmpOutputPath = path.join(tmpDir, `converted-${Date.now()}.jpg`);
+
+  fs.writeFileSync(tmpInputPath, buffer);
+
+  await new Promise((resolve, reject) => {
+    ffmpeg(tmpInputPath)
+      .outputOptions(['-frames:v', '1']) // just one frame/image, not a video
+      .save(tmpOutputPath)
+      .on('end', resolve)
+      .on('error', reject);
+  });
+
+  const converted = fs.readFileSync(tmpOutputPath);
+
+  fs.unlinkSync(tmpInputPath);
+  fs.unlinkSync(tmpOutputPath);
+
+  return converted;
 }
 
 export async function generateThumbnailFor(row) {
@@ -111,10 +166,21 @@ export async function generateThumbnailFor(row) {
     sourceForResize = original;
   }
 
-  const thumbBuffer = await sharp(sourceForResize)
-    .resize(THUMBNAIL_WIDTH, THUMBNAIL_WIDTH, { fit: 'cover' })
-    .jpeg({ quality: 75 })
-    .toBuffer();
+  let thumbBuffer;
+  try {
+    thumbBuffer = await sharp(sourceForResize)
+      .resize(THUMBNAIL_WIDTH, THUMBNAIL_WIDTH, { fit: 'cover' })
+      .jpeg({ quality: 75 })
+      .toBuffer();
+  } catch (sharpErr) {
+    if (videoDetected) throw sharpErr; // a genuinely broken video frame — don't mask this
+    console.warn(`sharp failed on ${row.b2_key} (${sharpErr.message}), falling back to ffmpeg conversion`);
+    const converted = await convertUnknownFormatToJpeg(sourceForResize);
+    thumbBuffer = await sharp(converted)
+      .resize(THUMBNAIL_WIDTH, THUMBNAIL_WIDTH, { fit: 'cover' })
+      .jpeg({ quality: 75 })
+      .toBuffer();
+  }
 
   // thumbnails are always stored as .jpg, regardless of the original's extension
   const thumbKey = `thumbnails/${row.b2_key.replace(/\.[^/.]+$/, '')}.jpg`;
@@ -129,3 +195,5 @@ export async function generateThumbnailFor(row) {
 
   if (error) throw new Error(error.message);
 }
+
+

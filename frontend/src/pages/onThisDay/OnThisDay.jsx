@@ -11,6 +11,7 @@ export default function OnThisDay() {
   const [status, setStatus] = useState('loading'); // 'loading' | 'loaded' | 'error'
   const [photos, setPhotos] = useState([]);
   const [range, setRange] = useState({ start: '', end: '' });
+  const [activeVideo, setActiveVideo] = useState(null); // photo object currently open in the modal, or null
 
   // separate state for the input fields, so typing doesn't refetch until submit
   const [startInput, setStartInput] = useState(todayString());
@@ -104,12 +105,19 @@ export default function OnThisDay() {
         <div style={styles.grid}>
           {photos.map((p) => (
             <figure key={p.id} style={styles.card}>
-              <a href={p.full_url} target="_blank" rel="noopener noreferrer" style={styles.thumbLink}>
-                <img src={p.thumb_url} alt="" style={styles.image} loading="lazy" />
-                {p.media_type === 'video' && (
+              {p.media_type === 'video' ? (
+                <button
+                  onClick={() => setActiveVideo(p)}
+                  style={{ ...styles.thumbLink, ...styles.thumbButtonReset }}
+                >
+                  <img src={p.thumb_url} alt="" style={styles.image} loading="lazy" />
                   <span style={styles.playOverlay} aria-hidden="true">▶</span>
-                )}
-              </a>
+                </button>
+              ) : (
+                <a href={p.full_url} target="_blank" rel="noopener noreferrer" style={styles.thumbLink}>
+                  <img src={p.thumb_url} alt="" style={styles.image} loading="lazy" />
+                </a>
+              )}
               <figcaption style={styles.caption}>
                 <span>
                   {p.years_ago === 0 ? 'today' : `${p.years_ago} year${p.years_ago > 1 ? 's' : ''} ago`}
@@ -120,6 +128,22 @@ export default function OnThisDay() {
               </figcaption>
             </figure>
           ))}
+        </div>
+      )}
+
+      {activeVideo && (
+        <div style={styles.modalBackdrop} onClick={() => setActiveVideo(null)}>
+          <div style={styles.modalContent} onClick={(e) => e.stopPropagation()}>
+            <video
+              src={activeVideo.full_url}
+              controls
+              autoPlay={false}
+              style={styles.modalVideo}
+            />
+            <button onClick={() => setActiveVideo(null)} style={styles.modalClose}>
+              close
+            </button>
+          </div>
         </div>
       )}
     </div>
@@ -245,6 +269,47 @@ const styles = {
     fontSize: '16px',
     pointerEvents: 'none',
   },
+  thumbButtonReset: {
+    border: 'none',
+    padding: 0,
+    margin: 0,
+    background: 'none',
+    cursor: 'pointer',
+    width: '100%',
+  },
+  modalBackdrop: {
+    position: 'fixed',
+    inset: 0,
+    background: 'rgba(11, 13, 18, 0.9)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 1000,
+    padding: '24px',
+  },
+  modalContent: {
+    maxWidth: '90vw',
+    maxHeight: '90vh',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '12px',
+    alignItems: 'center',
+  },
+  modalVideo: {
+    maxWidth: '90vw',
+    maxHeight: '80vh',
+    borderRadius: '8px',
+  },
+  modalClose: {
+    background: 'transparent',
+    border: '1px solid #2D3340',
+    color: '#9CA3AF',
+    borderRadius: '6px',
+    padding: '8px 16px',
+    fontFamily: FONT_MONO,
+    fontSize: '13px',
+    cursor: 'pointer',
+  },
   caption: {
     padding: '8px 10px',
     fontSize: '11px',
@@ -257,4 +322,6 @@ const styles = {
     color: '#E8A33D',
     textDecoration: 'none',
   },
-}; 
+};
+
+
