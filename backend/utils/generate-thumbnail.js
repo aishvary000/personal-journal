@@ -10,6 +10,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { S3Client, GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import sharp from 'sharp';
+import { generateThumbnailFor } from '../scripts/generate-thumbnails-lib.js';
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
 
@@ -95,22 +96,7 @@ async function run() {
 
   for (const row of rows) {
     try {
-      const original = await downloadFromB2(row.b2_key);
-      const thumbKey = `thumbnails/${row.b2_key}`;
-      const thumbBuffer = await sharp(original)
-        .resize(THUMBNAIL_WIDTH, THUMBNAIL_WIDTH, { fit: 'cover' })
-        .jpeg({ quality: 75 })
-        .toBuffer();
-
-      await uploadToB2(thumbKey, thumbBuffer);
-
-      const { error: updateError } = await supabase
-        .from('photos')
-        .update({ thumb_key: thumbKey })
-        .eq('id', row.id);
-
-      if (updateError) throw new Error(updateError.message);
-
+      await generateThumbnailFor(row);
       done += 1;
     } catch (err) {
       console.error(`Failed on ${row.b2_key}:`, err.message);
