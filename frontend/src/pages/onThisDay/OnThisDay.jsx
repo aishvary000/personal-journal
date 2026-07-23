@@ -104,8 +104,11 @@ export default function OnThisDay() {
         <div style={styles.grid}>
           {photos.map((p) => (
             <figure key={p.id} style={styles.card}>
-              <a href={p.full_url} target="_blank" rel="noopener noreferrer">
+              <a href={p.full_url} target="_blank" rel="noopener noreferrer" style={styles.thumbLink}>
                 <img src={p.thumb_url} alt="" style={styles.image} loading="lazy" />
+                {p.media_type === 'video' && (
+                  <span style={styles.playOverlay} aria-hidden="true">▶</span>
+                )}
               </a>
               <figcaption style={styles.caption}>
                 <span>
@@ -222,6 +225,26 @@ const styles = {
     objectFit: 'cover',
     display: 'block',
   },
+  thumbLink: {
+    position: 'relative',
+    display: 'block',
+  },
+  playOverlay: {
+    position: 'absolute',
+    top: '50%',
+    left: '50%',
+    transform: 'translate(-50%, -50%)',
+    width: '44px',
+    height: '44px',
+    borderRadius: '50%',
+    background: 'rgba(11, 13, 18, 0.7)',
+    color: '#E8A33D',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontSize: '16px',
+    pointerEvents: 'none',
+  },
   caption: {
     padding: '8px 10px',
     fontSize: '11px',
@@ -234,5 +257,4 @@ const styles = {
     color: '#E8A33D',
     textDecoration: 'none',
   },
-};
-
+}; 
