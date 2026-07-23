@@ -10,7 +10,6 @@ import rateLimit from "express-rate-limit";
 import cors from "cors";
 import { photosInRangeHandler } from './routes/photosInRangeHandler.js';
 import { thumbnailWebhookHandler } from "./routes/generate-thumbnail.js";
-import { thumbnailWebhookHandler } from "./routes/run-tumbnail-backfill.js";
 
 
 const app = express();
