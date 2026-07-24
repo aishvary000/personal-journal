@@ -1,3 +1,5 @@
+
+
 // scripts/generate-thumbnails-lib.js
 import { createClient } from '@supabase/supabase-js';
 import { S3Client, GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
@@ -155,9 +157,12 @@ async function convertUnknownFormatToJpeg(buffer) {
   return converted;
 }
 
-export async function generateThumbnailFor(row) {
-  const original = await downloadFromB2(row.b2_key);
-  const videoDetected = isVideo(row.b2_key);
+// Core logic — accepts a buffer you already have, so callers that already
+// downloaded the original (like ingestPhotosHandler) don't need to fetch it
+// from B2 a second time. Returns the thumb_key and corrected media_type,
+// but does NOT touch the database itself — callers decide how to persist it.
+export async function generateThumbnailFromBuffer(b2Key, original) {
+  const videoDetected = isVideo(b2Key);
 
   let sourceForResize;
   if (videoDetected) {
@@ -173,8 +178,8 @@ export async function generateThumbnailFor(row) {
       .jpeg({ quality: 75 })
       .toBuffer();
   } catch (sharpErr) {
-    if (videoDetected) throw sharpErr; // a genuinely broken video frame — don't mask this
-    console.warn(`sharp failed on ${row.b2_key} (${sharpErr.message}), falling back to ffmpeg conversion`);
+    if (videoDetected) throw sharpErr;
+    console.warn(`sharp failed on ${b2Key} (${sharpErr.message}), falling back to ffmpeg conversion`);
     const converted = await convertUnknownFormatToJpeg(sourceForResize);
     thumbBuffer = await sharp(converted)
       .resize(THUMBNAIL_WIDTH, THUMBNAIL_WIDTH, { fit: 'cover' })
@@ -182,18 +187,24 @@ export async function generateThumbnailFor(row) {
       .toBuffer();
   }
 
-  // thumbnails are always stored as .jpg, regardless of the original's extension
-  const thumbKey = `thumbnails/${row.b2_key.replace(/\.[^/.]+$/, '')}.jpg`;
+  const thumbKey = `thumbnails/${b2Key.replace(/\.[^/.]+$/, '')}.jpg`;
   await uploadToB2(thumbKey, thumbBuffer);
 
-  // also correct media_type here, in case this row's stored value was wrong
-  // (e.g. inserted before video detection existed in the sync script)
+  return { thumbKey, mediaType: videoDetected ? 'video' : 'image' };
+}
+
+// Row-based wrapper — used by the CLI backfill and the webhook, which only
+// have a row (not an already-downloaded buffer) to start from. Downloads the
+// original itself, then delegates to the shared core above, and persists
+// the result to the database.
+export async function generateThumbnailFor(row) {
+  const original = await downloadFromB2(row.b2_key);
+  const { thumbKey, mediaType } = await generateThumbnailFromBuffer(row.b2_key, original);
+
   const { error } = await supabase
     .from('photos')
-    .update({ thumb_key: thumbKey, media_type: videoDetected ? 'video' : 'image' })
+    .update({ thumb_key: thumbKey, media_type: mediaType })
     .eq('id', row.id);
 
   if (error) throw new Error(error.message);
 }
-
-
