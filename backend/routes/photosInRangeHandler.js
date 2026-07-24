@@ -22,10 +22,13 @@ function isValidDateString(str) {
   return /^\d{4}-\d{2}-\d{2}$/.test(str) && !isNaN(new Date(str).getTime());
 }
 
-// GET /api/photos?start=YYYY-MM-DD&end=YYYY-MM-DD
+// GET /api/photos                          → "On This Day": this month/day, every year
+// GET /api/photos?start=...&end=...         → a real, literal date range
 export async function photosInRangeHandler(req, res) {
   try {
     const today = new Date().toISOString().slice(0, 10);
+    const hasExplicitRange = Boolean(req.query.start || req.query.end);
+
     const start = req.query.start || today;
     const end = req.query.end || start;
 
@@ -36,31 +39,39 @@ export async function photosInRangeHandler(req, res) {
       return res.status(400).json({ error: 'start date must be before or equal to end date' });
     }
 
-    const { data, error } = await supabase.rpc('photos_in_range', {
-      start_date: start,
-      end_date: end,
-    });
+    let data, error;
+
+    if (hasExplicitRange) {
+      // real date range search
+      ({ data, error } = await supabase.rpc('photos_in_range', {
+        start_date: start,
+        end_date: end,
+      }));
+    } else {
+      // default "On This Day" view — today's month/day, matched across every year
+      const now = new Date();
+      ({ data, error } = await supabase.rpc('photos_on_this_day', {
+        target_month: now.getMonth() + 1,
+        target_day: now.getDate(),
+      }));
+    }
 
     if (error) {
-      console.error('RPC photos_in_range failed:', error.message);
+      console.error('RPC failed:', error.message);
       return res.status(500).json({ error: 'failed to fetch photos' });
     }
 
     const now = new Date();
 
-    const results = data
-      .filter((row) => row.media_type !== 'video')
-      .map((row) => ({
-        id: row.id,
-        taken_at: row.taken_at,
-        years_ago: now.getFullYear() - new Date(row.taken_at).getFullYear(),
-        // grid view — small, fast to load
-        thumb_url: signPhotoUrl(row.thumb_key || row.b2_key),
-        // click-through — full resolution, displayed inline in a new tab
-        full_url: signPhotoUrl(row.b2_key),
-        // explicit download button — same file, but forces a save-dialog
-        download_url: signPhotoUrl(row.b2_key, { download: true }),
-      }));
+    const results = data.map((row) => ({
+      id: row.id,
+      taken_at: row.taken_at,
+      media_type: row.media_type,
+      years_ago: now.getFullYear() - new Date(row.taken_at).getFullYear(),
+      thumb_url: signPhotoUrl(row.thumb_key || row.b2_key),
+      full_url: signPhotoUrl(row.b2_key),
+      download_url: signPhotoUrl(row.b2_key, { download: true }),
+    }));
 
     res.json({ start, end, count: results.length, photos: results });
   } catch (err) {
@@ -68,4 +79,3 @@ export async function photosInRangeHandler(req, res) {
     res.status(500).json({ error: 'internal error' });
   }
 }
-

@@ -1,7 +1,7 @@
-
 import { useState, useEffect, useCallback } from 'react';
 
 const FONT_MONO = "'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace";
+const API_BASE = import.meta.env.VITE_API_BASE_URL;
 
 function todayString() {
   return new Date().toISOString().slice(0, 10); // YYYY-MM-DD
@@ -11,7 +11,77 @@ export default function OnThisDay() {
   const [status, setStatus] = useState('loading'); // 'loading' | 'loaded' | 'error'
   const [photos, setPhotos] = useState([]);
   const [range, setRange] = useState({ start: '', end: '' });
-  const [activeVideo, setActiveVideo] = useState(null); // photo object currently open in the modal, or null
+  const [activeVideo, setActiveVideo] = useState(null);
+  const [selectedIds, setSelectedIds] = useState(new Set());
+  const [shareModal, setShareModal] = useState(null); // { link, passcode, name } once created
+  const [shareChoice, setShareChoice] = useState(null); // null | 'choosing' | 'new'
+  const [collectionName, setCollectionName] = useState('');
+  const [expiryChoice, setExpiryChoice] = useState('7'); // '7' | '30' | '90' | 'never'
+  const [existingCollections, setExistingCollections] = useState([]);
+  const [selectedCollectionId, setSelectedCollectionId] = useState('');
+
+  function toggleSelected(id) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  async function openShareChoice() {
+    setShareChoice('choosing');
+    // preload existing collections so the "add to existing" option can show them
+    try {
+      const res = await fetch(`${API_BASE}/api/shares?limit=100`, { credentials: 'include' });
+      const data = await res.json();
+      if (res.ok) setExistingCollections(data.shares);
+    } catch {
+      // if this fails, the "add to existing" option just won't have anything to show —
+      // "create new" still works fine regardless
+    }
+  }
+
+  async function handleAddToExisting() {
+    if (!selectedCollectionId) return;
+
+    const res = await fetch(`${API_BASE}/api/shares/${selectedCollectionId}/add-photos`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ photo_ids: Array.from(selectedIds) }),
+    });
+
+    const data = await res.json();
+    if (res.ok) {
+      setShareModal({ link: data.url, name: data.collection_name, addedTo: true });
+      setSelectedIds(new Set());
+      setShareChoice(null);
+      setSelectedCollectionId('');
+    }
+  }
+
+  async function handleCreateShare() {
+    const res = await fetch(`${API_BASE}/api/shares`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        photo_ids: Array.from(selectedIds),
+        collection_name: collectionName,
+        expires_in_days: expiryChoice === 'never' ? null : Number(expiryChoice),
+      }),
+    });
+
+    const data = await res.json();
+    if (res.ok) {
+      setShareModal({ link: data.url, passcode: data.passcode, name: collectionName || 'Untitled share' });
+      setSelectedIds(new Set());
+      setShareChoice(null);
+      setCollectionName('');
+      setExpiryChoice('7');
+    }
+  }
 
   // separate state for the input fields, so typing doesn't refetch until submit
   const [startInput, setStartInput] = useState(todayString());
@@ -25,7 +95,7 @@ export default function OnThisDay() {
     if (end) params.set('end', end);
     const query = params.toString() ? `?${params.toString()}` : '';
 
-    fetch(`https://api.personal-journal.aishvary.dev/api/photos${query}`, {
+    fetch(`${API_BASE}/api/photos${query}`, {
       credentials: 'include',
     })
       .then((res) => {
@@ -93,6 +163,11 @@ export default function OnThisDay() {
         <button onClick={handleResetToToday} style={styles.todayButton}>
           today
         </button>
+        {selectedIds.size > 0 && (
+          <button onClick={openShareChoice} style={styles.searchButton}>
+            share selected ({selectedIds.size})
+          </button>
+        )}
       </div>
 
       {status === 'loading' && <p style={styles.message}>loading photos…</p>}
@@ -105,6 +180,12 @@ export default function OnThisDay() {
         <div style={styles.grid}>
           {photos.map((p) => (
             <figure key={p.id} style={styles.card}>
+              <input
+                type="checkbox"
+                checked={selectedIds.has(p.id)}
+                onChange={() => toggleSelected(p.id)}
+                style={styles.checkbox}
+              />
               {p.media_type === 'video' ? (
                 <button
                   onClick={() => setActiveVideo(p)}
@@ -141,6 +222,116 @@ export default function OnThisDay() {
               style={styles.modalVideo}
             />
             <button onClick={() => setActiveVideo(null)} style={styles.modalClose}>
+              close
+            </button>
+          </div>
+        </div>
+      )}
+      {shareChoice === 'choosing' && (
+        <div style={styles.modalBackdrop} onClick={() => setShareChoice(null)}>
+          <div style={styles.modalContent} onClick={(e) => e.stopPropagation()}>
+            <div style={styles.shareBox}>
+              <span style={styles.shareLabel}>share these {selectedIds.size} photo(s)</span>
+              <button
+                onClick={() => setShareChoice('new')}
+                style={styles.searchButton}
+              >
+                create new collection
+              </button>
+              {existingCollections.length > 0 ? (
+                <>
+                  <span style={styles.shareLabel}>or add to an existing collection</span>
+                  <select
+                    value={selectedCollectionId}
+                    onChange={(e) => setSelectedCollectionId(e.target.value)}
+                    style={styles.dateInput}
+                  >
+                    <option value="">select a collection…</option>
+                    {existingCollections.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.collection_name} ({c.photo_count} photos)
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    onClick={handleAddToExisting}
+                    disabled={!selectedCollectionId}
+                    style={styles.todayButton}
+                  >
+                    add to selected collection
+                  </button>
+                </>
+              ) : (
+                <p style={styles.shareNote}>no existing collections yet — create one above.</p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {shareChoice === 'new' && (
+        <div style={styles.modalBackdrop} onClick={() => setShareChoice(null)}>
+          <div style={styles.modalContent} onClick={(e) => e.stopPropagation()}>
+            <div style={styles.shareBox}>
+              <span style={styles.shareLabel}>name this collection</span>
+              <input
+                type="text"
+                value={collectionName}
+                onChange={(e) => setCollectionName(e.target.value)}
+                placeholder="e.g. Goa trip 2024"
+                style={styles.dateInput}
+                autoFocus
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleCreateShare();
+                }}
+              />
+              <span style={styles.shareLabel}>link expires after</span>
+              <select
+                value={expiryChoice}
+                onChange={(e) => setExpiryChoice(e.target.value)}
+                style={styles.dateInput}
+              >
+                <option value="7">7 days</option>
+                <option value="30">30 days</option>
+                <option value="90">90 days</option>
+                <option value="never">never</option>
+              </select>
+              <p style={styles.shareNote}>
+                helps you identify this share later — not shown to whoever you send the link to.
+              </p>
+            </div>
+            <button onClick={handleCreateShare} style={styles.searchButton}>
+              create share
+            </button>
+          </div>
+        </div>
+      )}
+
+      {shareModal && (
+        <div style={styles.modalBackdrop} onClick={() => setShareModal(null)}>
+          <div style={styles.modalContent} onClick={(e) => e.stopPropagation()}>
+            <div style={styles.shareBox}>
+              <div style={styles.shareRow}>
+                <span style={styles.shareLabel}>collection</span>
+                <code style={styles.shareValue}>{shareModal.name}</code>
+              </div>
+              <div style={styles.shareRow}>
+                <span style={styles.shareLabel}>link</span>
+                <code style={styles.shareValue}>{shareModal.link}</code>
+              </div>
+              {shareModal.passcode && (
+                <div style={styles.shareRow}>
+                  <span style={styles.shareLabel}>passcode</span>
+                  <code style={styles.shareValue}>{shareModal.passcode}</code>
+                </div>
+              )}
+              <p style={styles.shareNote}>
+                {shareModal.addedTo
+                  ? 'photos added — the existing link and passcode still work, no need to resend them.'
+                  : 'send both the link and the passcode to whoever you want to see these.'}
+              </p>
+            </div>
+            <button onClick={() => setShareModal(null)} style={styles.modalClose}>
               close
             </button>
           </div>
@@ -242,6 +433,7 @@ const styles = {
     border: '1px solid #262B36',
     borderRadius: '8px',
     overflow: 'hidden',
+    position: 'relative',
   },
   image: {
     width: '100%',
@@ -322,6 +514,47 @@ const styles = {
     color: '#E8A33D',
     textDecoration: 'none',
   },
+  checkbox: {
+    position: 'absolute',
+    top: '8px',
+    left: '8px',
+    zIndex: 2,
+    width: '18px',
+    height: '18px',
+    cursor: 'pointer',
+  },
+  shareBox: {
+    background: '#12151C',
+    border: '1px solid #262B36',
+    borderRadius: '8px',
+    padding: '20px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '12px',
+    maxWidth: '380px',
+  },
+  shareRow: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '4px',
+  },
+  shareLabel: {
+    fontSize: '11px',
+    color: '#6B7280',
+  },
+  shareValue: {
+    background: '#0B0D12',
+    border: '1px solid #2D3340',
+    borderRadius: '6px',
+    padding: '8px 10px',
+    color: '#E8A33D',
+    fontSize: '13px',
+    wordBreak: 'break-all',
+  },
+  shareNote: {
+    fontSize: '11px',
+    color: '#6B7280',
+    lineHeight: 1.5,
+    margin: 0,
+  },
 };
-
-

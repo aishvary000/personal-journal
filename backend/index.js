@@ -10,6 +10,12 @@ import rateLimit from "express-rate-limit";
 import cors from "cors";
 import { photosInRangeHandler } from './routes/photosInRangeHandler.js';
 import { thumbnailWebhookHandler } from "./routes/generate-thumbnail.js";
+import { createShareHandler } from "./routes/create-share.js";
+import { unlockShareHandler } from "./routes/unlock-share.js";
+import { listSharesHandler } from "./routes/list-shares.js";
+import { resetSharePasscodeHandler } from "./routes/reset-share-passcode.js";
+import { addToShareHandler } from "./routes/add-to-share.js";
+import { deleteShareHandler } from "./routes/delete-share.js";
 
 
 const app = express();
@@ -153,7 +159,18 @@ app.post('/api/webhooks/thumbnail',express.json(),thumbnailWebhookHandler);
 
 app.post('/api/admin/run-thumbnail-backfill', express.json(), thumbnailWebhookHandler);
 
+const unlockLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5, // same reasoning as your /api/login limiter — this is now a brute-forceable PIN
+  message: { error: 'too many attempts, try again later' },
+});
 
+app.post('/api/shares', requireAuthPage, express.json(), createShareHandler);
+app.post('/api/shares/:shareId/unlock', unlockLimiter, express.json(), unlockShareHandler);
+app.get('/api/shares',requireAuthPage,listSharesHandler);
+app.post('/api/shares/:shareId/reset-passcode',requireAuthPage,express.json(),resetSharePasscodeHandler);
+app.post('/api/shares/:shareId/add-photos',requireAuthPage, express.json(),addToShareHandler);
+app.delete('/api/shares/:shareId',requireAuthPage, deleteShareHandler);
 
 app.listen(PORT, () => {
   console.log(`Presign server listening on port ${PORT}`);
