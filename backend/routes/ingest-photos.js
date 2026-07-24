@@ -26,9 +26,7 @@ const VIDEO_EXTENSIONS = ['.mp4', '.mov', '.avi', '.mkv', '.webm'];
 function isVideo(key) {
   return VIDEO_EXTENSIONS.some((ext) => key.toLowerCase().endsWith(ext));
 }
-function detectSource(key) {
-  return key.startsWith('osmo/') ? 'osmo' : 'phone';
-}
+
 function extractDateFromFilename(key) {
   const match = key.match(/(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})/);
   if (!match) return null;
@@ -102,7 +100,6 @@ export async function ingestPhotosHandler(req, res) {
           taken_at: takenAt,
           latitude,
           longitude,
-          source: detectSource(b2Key),
           media_type: mediaType,
           thumb_key: thumbKey,
         },
