@@ -9,33 +9,13 @@
 // Run with: node --env-file=.env scripts/backfill-metadata.js
 
 import { createClient } from '@supabase/supabase-js';
-import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
 import { extractMetadata, closeExifTool } from './extract-metadata.js';
+import { downloadViaWorker } from './download-via-worker.js';
 import phash from 'sharp-phash';
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
 
-const s3 = new S3Client({
-  endpoint: `https://s3.${process.env.B2_REGION}.backblazeb2.com`,
-  region: process.env.B2_REGION,
-  credentials: {
-    accessKeyId: process.env.B2_KEY_ID,
-    secretAccessKey: process.env.B2_APP_KEY,
-  },
-});
-
 const PAGE_SIZE = 1000;
-
-async function streamToBuffer(stream) {
-  const chunks = [];
-  for await (const chunk of stream) chunks.push(chunk);
-  return Buffer.concat(chunks);
-}
-
-async function downloadFromB2(key) {
-  const response = await s3.send(new GetObjectCommand({ Bucket: process.env.B2_BUCKET, Key: key }));
-  return streamToBuffer(response.Body);
-}
 
 // Rows missing the new fields — using camera_make as the "have I processed
 // this row yet" marker, since it's null for anything synced before this change.
@@ -48,7 +28,7 @@ async function fetchRowsNeedingBackfill() {
     const { data, error } = await supabase
       .from('photos')
       .select('id, b2_key, thumb_key')
-      .is('phash', null)
+      .is('checksum', null)
       .range(from, to);
 
     if (error) throw new Error(error.message);
@@ -86,7 +66,7 @@ async function computePhash(row, originalBuffer) {
   try {
     if (isVideo(row.b2_key)) {
       if (!row.thumb_key) return null;
-      const thumbBuffer = await downloadFromB2(row.thumb_key);
+      const thumbBuffer = await downloadViaWorker(row.thumb_key);
       return await withTimeout(phash(thumbBuffer), 15000, 'phash computation');
     }
     return await withTimeout(phash(originalBuffer), 15000, 'phash computation');
@@ -105,7 +85,7 @@ async function run() {
 
   for (const row of rows) {
     try {
-      const originalBuffer = await downloadFromB2(row.b2_key);
+      const originalBuffer = await downloadViaWorker(row.b2_key);
       const filename = row.b2_key.split('/').pop();
 
       const meta = await extractMetadata(originalBuffer, filename);
@@ -154,4 +134,3 @@ run()
   .finally(async () => {
     await closeExifTool();
   });
-

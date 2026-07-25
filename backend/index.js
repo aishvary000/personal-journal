@@ -17,6 +17,7 @@ import { resetSharePasscodeHandler } from "./routes/reset-share-passcode.js";
 import { addToShareHandler } from "./routes/add-to-share.js";
 import { deleteShareHandler } from "./routes/delete-share.js";
 import { ingestPhotosHandler } from "./routes/ingest-photos.js";
+import { listMomentsHandler, momentPhotosHandler } from "./routes/moment.js";
 
 
 const app = express();
@@ -172,7 +173,9 @@ app.get('/api/shares',requireAuthPage,listSharesHandler);
 app.post('/api/shares/:shareId/reset-passcode',requireAuthPage,express.json(),resetSharePasscodeHandler);
 app.post('/api/shares/:shareId/add-photos',requireAuthPage, express.json(),addToShareHandler);
 app.delete('/api/shares/:shareId',requireAuthPage, deleteShareHandler);
-app.post('/api/admin/ingest-photos', express.json(), ingestPhotosHandler)
+app.post('/api/admin/ingest-photos', express.json(), ingestPhotosHandler);
+app.get('/api/moments', requireAuthPage, listMomentsHandler);
+app.get('/api/moments/:clusterId/photos', requireAuthPage, momentPhotosHandler);
 
 app.listen(PORT, () => {
   console.log(`Presign server listening on port ${PORT}`);
