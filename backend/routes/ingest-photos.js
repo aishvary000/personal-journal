@@ -10,6 +10,34 @@ import { createClient } from '@supabase/supabase-js';
 import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
 import { extractMetadata } from '../scripts/extract-metadata.js';
 import { generateThumbnailFromBuffer } from '../scripts/generate-thumbnails-lib.js';
+import phash from 'sharp-phash';
+
+function withTimeout(promise, ms, label) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms)
+    ),
+  ]);
+}
+
+// Fire-and-forget: computes phash from a buffer already in memory (no extra
+// download needed) and writes it in a SEPARATE update once done. Deliberately
+// not awaited by the caller — a slow or hung phash computation can never
+// block the main upsert or delay processing of the next photo in the batch.
+function schedulePhashUpdate(supabase, b2Key, thumbBuffer) {
+  console.log(`[${b2Key}] scheduling background phash computation`);
+  withTimeout(phash(thumbBuffer), 10000, 'phash computation')
+    .then(async (phashValue) => {
+      console.log(`[${b2Key}] phash computed successfully:`, phashValue);
+      const { error } = await supabase.from('photos').update({ phash: phashValue }).eq('b2_key', b2Key);
+      if (error) console.error(`[${b2Key}] failed to save phash:`, error.message);
+      else console.log(`[${b2Key}] phash saved to DB`);
+    })
+    .catch((err) => {
+      console.warn(`[${b2Key}] phash computation failed: ${err.message}`);
+    });
+}
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
 
@@ -26,7 +54,6 @@ const VIDEO_EXTENSIONS = ['.mp4', '.mov', '.avi', '.mkv', '.webm'];
 function isVideo(key) {
   return VIDEO_EXTENSIONS.some((ext) => key.toLowerCase().endsWith(ext));
 }
-
 function extractDateFromFilename(key) {
   const match = key.match(/(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})/);
   if (!match) return null;
@@ -56,22 +83,51 @@ export async function ingestPhotosHandler(req, res) {
   // respond immediately — Termux doesn't need to wait for this to finish
   res.status(200).json({ accepted: true, count: keys.length });
 
+  console.log(`Starting ingest for ${keys.length} key(s):`, keys);
+
   let synced = 0;
   let skipped = 0;
 
   for (const b2Key of keys) {
+    console.log(`[${b2Key}] --- starting ---`);
     try {
+      console.log(`[${b2Key}] downloading from B2...`);
       const response = await s3.send(
         new GetObjectCommand({ Bucket: process.env.B2_BUCKET, Key: b2Key })
       );
       const buffer = await streamToBuffer(response.Body);
+      console.log(`[${b2Key}] downloaded, size=${buffer.length} bytes`);
+
       const filename = b2Key.split('/').pop();
 
-      const { takenAt: metaDate, latitude, longitude } = await extractMetadata(buffer, filename);
+      console.log(`[${b2Key}] extracting metadata...`);
+      const {
+        takenAt: metaDate,
+        latitude,
+        longitude,
+        cameraMake,
+        cameraModel,
+        width,
+        height,
+        durationSeconds,
+        orientation,
+        checksum,
+        fileSize,
+        iso,
+        aperture,
+        shutterSpeed,
+        focalLength,
+        gpsAltitude,
+      } = await extractMetadata(buffer, filename);
+      console.log(`[${b2Key}] metadata extracted:`, {
+        metaDate, latitude, longitude, cameraMake, cameraModel, width, height, checksum: checksum?.slice(0, 8),
+      });
+
       const takenAt = metaDate || extractDateFromFilename(b2Key);
+      console.log(`[${b2Key}] final takenAt:`, takenAt);
 
       if (!takenAt) {
-        console.warn(`Skipping ${b2Key} — no date from metadata or filename`);
+        console.warn(`[${b2Key}] SKIPPING — no date from metadata or filename`);
         skipped += 1;
         continue;
       }
@@ -82,24 +138,39 @@ export async function ingestPhotosHandler(req, res) {
       // thumb_key just stays null and the webhook/daily backfill catches it
       // as a fallback, same safety net as before.
       let thumbKey = null;
+      let thumbBuffer = null;
       let mediaType = isVideo(b2Key) ? 'video' : 'image';
+      console.log(`[${b2Key}] generating thumbnail (mediaType guess: ${mediaType})...`);
       try {
         const result = await generateThumbnailFromBuffer(b2Key, buffer);
         thumbKey = result.thumbKey;
+        thumbBuffer = result.thumbBuffer;
         mediaType = result.mediaType; // self-corrects if extension-based detection was wrong
+        console.log(`[${b2Key}] thumbnail generated, thumbKey=${thumbKey}, mediaType=${mediaType}`);
       } catch (thumbErr) {
-        console.warn(`Thumbnail generation failed for ${b2Key} during ingest: ${thumbErr.message}`);
-        // leave thumb_key null — webhook fires on insert below, but since it
-        // sees a null thumb_key it will actually try again (not skip),
-        // giving this a second chance without any extra code needed here
+        console.warn(`[${b2Key}] thumbnail generation FAILED: ${thumbErr.message}`);
       }
 
+      console.log(`[${b2Key}] upserting into photos table...`);
       const { error } = await supabase.from('photos').upsert(
         {
           b2_key: b2Key,
           taken_at: takenAt,
           latitude,
           longitude,
+          camera_make: cameraMake,
+          camera_model: cameraModel,
+          width,
+          height,
+          duration_seconds: durationSeconds,
+          orientation,
+          checksum,
+          file_size: fileSize,
+          iso,
+          aperture,
+          shutter_speed: shutterSpeed,
+          focal_length: focalLength,
+          gps_altitude: gpsAltitude,
           media_type: mediaType,
           thumb_key: thumbKey,
         },
@@ -107,14 +178,25 @@ export async function ingestPhotosHandler(req, res) {
       );
 
       if (error) {
-        console.error(`Failed to upsert ${b2Key}:`, error.message);
+        console.error(`[${b2Key}] UPSERT FAILED:`, error.message);
         skipped += 1;
         continue;
       }
+      console.log(`[${b2Key}] upsert succeeded`);
+
+      // Fire-and-forget — uses the thumbnail buffer already in memory (no
+      // extra download from B2), and can never slow down or block this loop
+      // since it isn't awaited. Succeeds or fails independently, later.
+      if (thumbBuffer) {
+        schedulePhashUpdate(supabase, b2Key, thumbBuffer);
+      } else {
+        console.log(`[${b2Key}] no thumbBuffer available, skipping phash scheduling`);
+      }
 
       synced += 1;
+      console.log(`[${b2Key}] --- done ---`);
     } catch (err) {
-      console.error(`Failed processing ${b2Key}:`, err.message);
+      console.error(`[${b2Key}] FAILED PROCESSING:`, err.message, err.stack);
       skipped += 1;
     }
   }

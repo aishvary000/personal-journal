@@ -1,5 +1,4 @@
 
-
 // extract-metadata.js
 //
 // Unified date + GPS extraction for BOTH photos and videos, using ExifTool
@@ -8,6 +7,7 @@
 // ffprobe metadata-reading approach with one consistent tool.
 
 import { ExifTool } from 'exiftool-vendored';
+import crypto from 'crypto';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -20,42 +20,97 @@ const exiftool = new ExifTool();
 const CAPTURE_TIMEZONE_OFFSET = '+05:30'; // IST — used only when no offset is
                                             // recorded in the file itself
 
+function emptyResult() {
+  return {
+    takenAt: null,
+    latitude: null,
+    longitude: null,
+    cameraMake: null,
+    cameraModel: null,
+    width: null,
+    height: null,
+    durationSeconds: null,
+    orientation: null,
+    checksum: null,
+    fileSize: null,
+    iso: null,
+    aperture: null,
+    shutterSpeed: null,
+    focalLength: null,
+    gpsAltitude: null,
+  };
+}
+
 export async function extractMetadata(buffer, originalFilename) {
   const ext = path.extname(originalFilename) || '.tmp';
   const tmpPath = path.join(os.tmpdir(), `meta-${Date.now()}${ext}`);
   fs.writeFileSync(tmpPath, buffer);
 
+  // Not from ExifTool at all — computed directly from the raw bytes. Cheap,
+  // and enables exact-duplicate detection (different from phash's
+  // near-duplicate detection) plus future integrity verification.
+  const checksum = crypto.createHash('sha256').update(buffer).digest('hex');
+  const fileSize = buffer.length;
+
   try {
     const tags = await exiftool.read(tmpPath);
 
     // --- Date resolution ---
-    // Photos: DateTimeOriginal. Videos: CreateDate (falls back to
-    // MediaCreateDate/TrackCreateDate on some containers, which
-    // exiftool-vendored also surfaces if present).
     const rawDate = tags.DateTimeOriginal || tags.CreateDate || null;
     let takenAt = null;
 
     if (rawDate) {
       if (rawDate.tzoffsetMinutes != null) {
-        // the file actually recorded a timezone offset — trust it directly
         takenAt = rawDate.toDate().toISOString();
       } else {
-        // no offset recorded — treat the wall-clock reading as IST
         const wallClock = rawDate.toString().slice(0, 19).replace(' ', 'T');
         takenAt = new Date(`${wallClock}${CAPTURE_TIMEZONE_OFFSET}`).toISOString();
       }
     }
-
     // --- GPS resolution ---
-    // exiftool-vendored returns already-converted signed decimal degrees —
-    // no manual DMS/N-S-E-W parsing needed.
     const latitude = typeof tags.GPSLatitude === 'number' ? tags.GPSLatitude : null;
     const longitude = typeof tags.GPSLongitude === 'number' ? tags.GPSLongitude : null;
+    const gpsAltitude = typeof tags.GPSAltitude === 'number' ? tags.GPSAltitude : null;
 
-    return { takenAt, latitude, longitude };
+    // --- Camera/file info ---
+    const cameraMake = tags.Make || null;
+    const cameraModel = tags.Model || null;
+    const width = tags.ImageWidth || tags.ExifImageWidth || null;
+    const height = tags.ImageHeight || tags.ExifImageHeight || null;
+    const durationSeconds = typeof tags.Duration === 'number' ? tags.Duration : null;
+    const orientation = typeof tags.Orientation === 'number' ? tags.Orientation : null;
+
+    // --- Camera settings (the "exposure triangle" + focal length) ---
+    const iso = typeof tags.ISO === 'number' ? tags.ISO : null;
+    const aperture = typeof tags.FNumber === 'number' ? tags.FNumber : null;
+    // ExposureTime comes back as decimal seconds (e.g. 0.004 for a 1/250s shot)
+    const shutterSpeed = typeof tags.ExposureTime === 'number' ? tags.ExposureTime : null;
+    const focalLength = typeof tags.FocalLength === 'number' ? tags.FocalLength : null;
+
+    return {
+      takenAt,
+      latitude,
+      longitude,
+      cameraMake,
+      cameraModel,
+      width,
+      height,
+      durationSeconds,
+      orientation,
+      checksum,
+      fileSize,
+      iso,
+      aperture,
+      shutterSpeed,
+      focalLength,
+      gpsAltitude,
+    };
   } catch (err) {
     console.warn(`ExifTool read failed for ${originalFilename}: ${err.message}`);
-    return { takenAt: null, latitude: null, longitude: null };
+    // still return the checksum/fileSize even if ExifTool itself failed —
+    // those come from the raw bytes, not from ExifTool, so there's no reason
+    // to lose them just because metadata parsing had an issue
+    return { ...emptyResult(), checksum, fileSize };
   } finally {
     fs.unlinkSync(tmpPath);
   }

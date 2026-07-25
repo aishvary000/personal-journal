@@ -190,7 +190,7 @@ export async function generateThumbnailFromBuffer(b2Key, original) {
   const thumbKey = `thumbnails/${b2Key.replace(/\.[^/.]+$/, '')}.jpg`;
   await uploadToB2(thumbKey, thumbBuffer);
 
-  return { thumbKey, mediaType: videoDetected ? 'video' : 'image' };
+  return { thumbKey, mediaType: videoDetected ? 'video' : 'image', thumbBuffer };
 }
 
 // Row-based wrapper — used by the CLI backfill and the webhook, which only
