@@ -18,7 +18,10 @@ import { addToShareHandler } from "./routes/add-to-share.js";
 import { deleteShareHandler } from "./routes/delete-share.js";
 import { ingestPhotosHandler } from "./routes/ingest-photos.js";
 import { listMomentsHandler, momentPhotosHandler } from "./routes/moment.js";
-
+import { osmoPhotosHandler } from './routes/osmo-photos.js';
+import { ingestSmsHandler } from "./routes/ingest-sms.js";
+import { listTransactionsHandler, updateTransactionHandler } from './routes/transactions.js';
+import { listCategoriesHandler } from "./routes/list-categories.js";
 
 const app = express();
 
@@ -176,6 +179,11 @@ app.delete('/api/shares/:shareId',requireAuthPage, deleteShareHandler);
 app.post('/api/admin/ingest-photos', express.json(), ingestPhotosHandler);
 app.get('/api/moments', requireAuthPage, listMomentsHandler);
 app.get('/api/moments/:clusterId/photos', requireAuthPage, momentPhotosHandler);
+app.get('/api/osmo/photos', requireAuthPage, osmoPhotosHandler);
+app.post('/api/admin/ingest-sms', express.json(), ingestSmsHandler);
+app.get('/api/finance/transactions', requireAuthPage, listTransactionsHandler);
+app.patch('/api/finance/transactions/:id', requireAuthPage, express.json(), updateTransactionHandler);
+app.get('/api/finance/categories', requireAuthPage, listCategoriesHandler);
 
 app.listen(PORT, () => {
   console.log(`Presign server listening on port ${PORT}`);

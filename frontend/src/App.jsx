@@ -7,6 +7,8 @@ import SharePage from './pages/sharePage/SharePage';
 import Collections from './pages/collections/Collections';
 import Moments from './pages/moments/Moments';
 import MomentDetail from './pages/momentDetails/MomentDetails';
+import Osmo from './pages/osmo/Osmo';
+import TransactionReview from './pages/finance/Finance';
 
 export default function App() {
   return (
@@ -26,7 +28,9 @@ export default function App() {
         <Route path='/collections' element={<ProtectedRoute><Collections/></ProtectedRoute>} />
         <Route path="/moments" element={<ProtectedRoute><Moments /></ProtectedRoute>} />
         <Route path="/moments/:clusterId" element={<ProtectedRoute><MomentDetail /></ProtectedRoute>} />
-
+        <Route path="/osmo" element={<ProtectedRoute><Osmo /></ProtectedRoute>} />
+        <Route path="/finance/review" element={<ProtectedRoute><TransactionReview /></ProtectedRoute>} />
+        <Route path="*" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
       </Routes>
     </BrowserRouter>
   );
