@@ -9,6 +9,7 @@ import Moments from './pages/moments/Moments';
 import MomentDetail from './pages/momentDetails/MomentDetails';
 import Osmo from './pages/osmo/Osmo';
 import TransactionReview from './pages/finance/Finance';
+import MapPinning from './pages/mapPinning/MapPinning';
 
 export default function App() {
   return (
@@ -30,6 +31,7 @@ export default function App() {
         <Route path="/moments/:clusterId" element={<ProtectedRoute><MomentDetail /></ProtectedRoute>} />
         <Route path="/osmo" element={<ProtectedRoute><Osmo /></ProtectedRoute>} />
         <Route path="/finance/review" element={<ProtectedRoute><TransactionReview /></ProtectedRoute>} />
+        <Route path="/map" element={<ProtectedRoute><MapPinning /></ProtectedRoute>} />
         <Route path="*" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
       </Routes>
     </BrowserRouter>

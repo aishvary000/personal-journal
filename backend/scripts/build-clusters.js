@@ -1,9 +1,12 @@
+
 // scripts/build-clusters.js
 //
-// Groups photos into "Moments" — sequential runs of photos close together in
-// time AND (when GPS is available) close together in location. Recomputes
-// ALL clusters from scratch every run — simple, safe to re-run anytime as
-// your library grows, no incremental-update complexity to get wrong.
+// INCREMENTAL version — only processes photos that don't have a cluster_id
+// yet. Previously this rebuilt everything from scratch every run: wiped all
+// clusters, re-assigned every photo, and re-geocoded every single cluster
+// again (including Nominatim's 1.1s rate-limit sleep per cluster) even for
+// clusters that hadn't changed at all. This version only touches what's
+// actually new.
 //
 // Run with: node --env-file=.env scripts/build-clusters.js
 
@@ -11,12 +14,10 @@ import { createClient } from '@supabase/supabase-js';
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
 
-const TIME_GAP_MS = 3 * 60 * 60 * 1000; // 3 hours — longer gap starts a new cluster
-const DISTANCE_KM_THRESHOLD = 2; // 2km — bigger jump starts a new cluster (only
-                                   // checked when both photos have GPS)
+const TIME_GAP_MS = 3 * 60 * 60 * 1000; // 3 hours
+const DISTANCE_KM_THRESHOLD = 2; // 2km
 const PAGE_SIZE = 1000;
 
-// Haversine formula — great-circle distance between two lat/long points, in km
 function distanceKm(lat1, lon1, lat2, lon2) {
   const R = 6371;
   const dLat = ((lat2 - lat1) * Math.PI) / 180;
@@ -27,34 +28,23 @@ function distanceKm(lat1, lon1, lat2, lon2) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-// Averages the GPS coordinates of every photo in a cluster that actually has
-// one, giving a single representative point for the whole event.
 function computeCenterPoint(group) {
   const withGps = group.filter((p) => p.latitude != null && p.longitude != null);
   if (withGps.length === 0) return { latitude: null, longitude: null };
-
   const latitude = withGps.reduce((sum, p) => sum + p.latitude, 0) / withGps.length;
   const longitude = withGps.reduce((sum, p) => sum + p.longitude, 0) / withGps.length;
   return { latitude, longitude };
 }
 
-// Nominatim's free reverse-geocoding API — no key needed, but usage policy
-// requires: max 1 request/second, and a descriptive User-Agent identifying
-// the app (not the default Node/fetch one, which gets blocked).
 async function reverseGeocode(latitude, longitude) {
   if (latitude == null || longitude == null) return null;
-
   try {
     const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&zoom=10`;
     const response = await fetch(url, {
       headers: { 'User-Agent': 'personal-journal-app/1.0 (personal use, github.com/aishvary)' },
     });
-
     if (!response.ok) return null;
     const data = await response.json();
-
-    // zoom=10 gives city/town-level detail rather than a precise street address —
-    // more appropriate for labeling a whole event than an exact pinpoint
     const address = data.address || {};
     return address.city || address.town || address.village || address.county || data.display_name || null;
   } catch (err) {
@@ -67,76 +57,145 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function fetchAllPhotos() {
+// Fetches ONLY photos not yet assigned to a cluster — this is the key
+// change that avoids reprocessing your whole library every run.
+async function fetchUnclusteredPhotos() {
   let allRows = [];
   let from = 0;
-
   while (true) {
     const to = from + PAGE_SIZE - 1;
     const { data, error } = await supabase
       .from('photos')
       .select('id, taken_at, latitude, longitude')
       .not('taken_at', 'is', null)
+      .is('cluster_id', null)
       .order('taken_at', { ascending: true })
       .range(from, to);
-
     if (error) throw new Error(error.message);
     allRows = allRows.concat(data);
     if (data.length < PAGE_SIZE) break;
     from += PAGE_SIZE;
   }
-
   return allRows;
 }
 
-function buildClusterGroups(photos) {
-  const groups = [];
-  let current = [];
+// The most recently-ending existing cluster, plus its last photo's
+// coordinates — used to decide whether the first new photo should EXTEND
+// that cluster rather than start a brand new one.
+async function fetchMostRecentCluster() {
+  const { data: cluster } = await supabase
+    .from('clusters')
+    .select('*')
+    .order('end_date', { ascending: false })
+    .limit(1)
+    .maybeSingle();
 
-  for (const photo of photos) {
-    if (current.length === 0) {
-      current.push(photo);
-      continue;
-    }
+  if (!cluster) return null;
 
-    const prev = current[current.length - 1];
-    const timeDiff = new Date(photo.taken_at) - new Date(prev.taken_at);
+  const { data: lastPhoto } = await supabase
+    .from('photos')
+    .select('id, taken_at, latitude, longitude')
+    .eq('cluster_id', cluster.id)
+    .order('taken_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
 
-    let shouldStartNew = timeDiff > TIME_GAP_MS;
-
-    if (!shouldStartNew && photo.latitude != null && prev.latitude != null) {
-      const dist = distanceKm(prev.latitude, prev.longitude, photo.latitude, photo.longitude);
-      if (dist > DISTANCE_KM_THRESHOLD) shouldStartNew = true;
-    }
-
-    if (shouldStartNew) {
-      groups.push(current);
-      current = [photo];
-    } else {
-      current.push(photo);
-    }
-  }
-
-  if (current.length > 0) groups.push(current);
-  return groups;
+  return { cluster, lastPhoto };
 }
 
 async function run() {
-  console.log('Fetching all dated photos...');
-  const photos = await fetchAllPhotos();
-  console.log(`Found ${photos.length} photo(s) with a date.`);
+  console.log('Fetching unclustered photos...');
+  const photos = await fetchUnclusteredPhotos();
+  console.log(`Found ${photos.length} unclustered photo(s).`);
 
-  const groups = buildClusterGroups(photos);
-  console.log(`Grouped into ${groups.length} cluster(s).`);
+  if (photos.length === 0) {
+    console.log('Nothing new to cluster.');
+    return;
+  }
 
-  // Clear existing cluster assignments before rebuilding, so a re-run never
-  // leaves stale/orphaned clusters behind
-  await supabase.from('photos').update({ cluster_id: null }).not('cluster_id', 'is', null);
-  await supabase.from('clusters').delete().neq('id', 0); // delete all rows
+  const recent = await fetchMostRecentCluster();
 
+  // Determine whether the very first new photo extends the most recent
+  // existing cluster, or starts a fresh one.
+  let extendCluster = null;
+  let remainingPhotos = photos;
+
+  if (recent?.lastPhoto) {
+    const first = photos[0];
+    const timeDiff = new Date(first.taken_at) - new Date(recent.lastPhoto.taken_at);
+    let fits = timeDiff <= TIME_GAP_MS;
+    if (fits && first.latitude != null && recent.lastPhoto.latitude != null) {
+      const dist = distanceKm(
+        recent.lastPhoto.latitude, recent.lastPhoto.longitude,
+        first.latitude, first.longitude
+      );
+      if (dist > DISTANCE_KM_THRESHOLD) fits = false;
+    }
+    if (fits) extendCluster = recent.cluster;
+  }
+
+  // Walk through the new photos, grouping sequentially exactly like before,
+  // but seeded with the boundary photo so the very first group can
+  // correctly decide to extend rather than always starting fresh.
+  const groups = [];
+  let current = [];
+  let previous = recent?.lastPhoto || null;
+
+  for (const photo of remainingPhotos) {
+    if (previous) {
+      const timeDiff = new Date(photo.taken_at) - new Date(previous.taken_at);
+      let shouldStartNew = timeDiff > TIME_GAP_MS;
+      if (!shouldStartNew && photo.latitude != null && previous.latitude != null) {
+        const dist = distanceKm(previous.latitude, previous.longitude, photo.latitude, photo.longitude);
+        if (dist > DISTANCE_KM_THRESHOLD) shouldStartNew = true;
+      }
+      if (shouldStartNew && current.length > 0) {
+        groups.push(current);
+        current = [photo];
+      } else {
+        current.push(photo);
+      }
+    } else {
+      current.push(photo);
+    }
+    previous = photo;
+  }
+  if (current.length > 0) groups.push(current);
+
+  let extended = 0;
   let created = 0;
 
-  for (const group of groups) {
+  for (let i = 0; i < groups.length; i++) {
+    const group = groups[i];
+    const photoIds = group.map((p) => p.id);
+
+    // The FIRST group only extends the existing cluster if we determined
+    // above that the boundary genuinely fits — every group after that is
+    // always new, since by definition a gap was detected to start it.
+    if (i === 0 && extendCluster) {
+      const newEndDate = group[group.length - 1].taken_at;
+
+      const { error: updateClusterError } = await supabase
+        .from('clusters')
+        .update({
+          end_date: newEndDate,
+          photo_count: extendCluster.photo_count + group.length,
+        })
+        .eq('id', extendCluster.id);
+
+      if (updateClusterError) {
+        console.error('Failed to extend cluster:', updateClusterError.message);
+        continue;
+      }
+
+      await supabase.from('photos').update({ cluster_id: extendCluster.id }).in('id', photoIds);
+      extended += 1;
+      console.log(`Extended existing cluster ${extendCluster.id} with ${group.length} photo(s).`);
+      continue;
+    }
+
+    // Every other group is a genuinely NEW cluster — this is the only case
+    // that needs a fresh reverse-geocode call.
     const startDate = group[0].taken_at;
     const endDate = group[group.length - 1].taken_at;
     const coverPhotoId = group[0].id;
@@ -145,7 +204,7 @@ async function run() {
     let placeName = null;
     if (latitude != null) {
       placeName = await reverseGeocode(latitude, longitude);
-      await sleep(1100); // respect Nominatim's 1 request/second usage policy
+      await sleep(1100); // Nominatim's usage policy — only paid for NEW clusters now
     }
 
     const { data: cluster, error } = await supabase
@@ -167,24 +226,16 @@ async function run() {
       continue;
     }
 
-    const photoIds = group.map((p) => p.id);
-    const { error: updateError } = await supabase
-      .from('photos')
-      .update({ cluster_id: cluster.id })
-      .in('id', photoIds);
-
-    if (updateError) {
-      console.error(`Failed to assign cluster ${cluster.id} to its photos:`, updateError.message);
-      continue;
-    }
-
+    await supabase.from('photos').update({ cluster_id: cluster.id }).in('id', photoIds);
     created += 1;
   }
 
-  console.log(`Done. Created ${created} cluster(s).`);
+  console.log(`Done. Extended ${extended} existing cluster(s), created ${created} new one(s).`);
 }
 
 run().catch((err) => {
   console.error('Clustering failed:', err);
   process.exitCode = 1;
 });
+
+

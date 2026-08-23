@@ -22,6 +22,7 @@ import { osmoPhotosHandler } from './routes/osmo-photos.js';
 import { ingestSmsHandler } from "./routes/ingest-sms.js";
 import { listTransactionsHandler, updateTransactionHandler } from './routes/transactions.js';
 import { listCategoriesHandler } from "./routes/list-categories.js";
+import { mapPointsHandler } from "./routes/map-points.js";
 
 const app = express();
 
@@ -184,7 +185,7 @@ app.post('/api/admin/ingest-sms', express.json(), ingestSmsHandler);
 app.get('/api/finance/transactions', requireAuthPage, listTransactionsHandler);
 app.patch('/api/finance/transactions/:id', requireAuthPage, express.json(), updateTransactionHandler);
 app.get('/api/finance/categories', requireAuthPage, listCategoriesHandler);
-
+app.get('/api/moments/map-points', requireAuthPage, mapPointsHandler);
 app.listen(PORT, () => {
   console.log(`Presign server listening on port ${PORT}`);
 });
