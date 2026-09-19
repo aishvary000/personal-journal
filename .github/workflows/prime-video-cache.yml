@@ -1,0 +1,30 @@
+name: Prime video cache
+
+on:
+  schedule:
+    - cron: '30 0 * * *' # daily, 00:30 UTC = 6:00 AM IST
+  workflow_dispatch: # allows manual triggering from the Actions tab too
+
+jobs:
+  prime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330 # 5.5 hours — under GitHub's 6-hour hard limit,
+                          # leaving room for checkout/setup overhead
+    defaults:
+      run:
+        working-directory: backend # package.json lives in backend/, not the repo root
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - run: npm install
+
+      - run: node scripts/cache-warm-githubflow.js
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          PHOTO_SIGNING_SECRET: ${{ secrets.PHOTO_SIGNING_SECRET }}
+          MAX_RUN_BUDGET_SECONDS: 18000 # 5 hours — leaves headroom under the job's own 5.5hr timeout
