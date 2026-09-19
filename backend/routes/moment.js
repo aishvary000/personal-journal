@@ -82,7 +82,7 @@ export async function momentPhotosHandler(req, res) {
       taken_at: row.taken_at,
       media_type: row.media_type,
       thumb_url: signPhotoUrl(row.thumb_key || row.b2_key),
-      full_url: signPhotoUrl(row.b2_key),
+      full_url: signPhotoUrl(row.web_video_key || row.b2_key),
       download_url: signPhotoUrl(row.b2_key, { download: true }),
     }));
 

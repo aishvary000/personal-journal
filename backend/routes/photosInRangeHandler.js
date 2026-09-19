@@ -69,7 +69,7 @@ export async function photosInRangeHandler(req, res) {
       media_type: row.media_type,
       years_ago: now.getFullYear() - new Date(row.taken_at).getFullYear(),
       thumb_url: signPhotoUrl(row.thumb_key || row.b2_key),
-      full_url: signPhotoUrl(row.b2_key),
+      full_url: signPhotoUrl(row.web_video_key || row.b2_key),
       download_url: signPhotoUrl(row.b2_key, { download: true }),
     }));
 

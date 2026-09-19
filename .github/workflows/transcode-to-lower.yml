@@ -3,7 +3,7 @@ name: Transcode videos
 
 on:
   schedule:
-    - cron: '0 21 * * *' # daily, 21:00 UTC = 2:30 AM IST — off-peak, won't
+    - cron: '30 10 * * *' # daily, 21:00 UTC = 2:30 AM IST — off-peak, won't
                           # collide with the 6 AM IST cache-warm run
   workflow_dispatch:
 
