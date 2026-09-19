@@ -2,7 +2,7 @@ name: Prime video cache
 
 on:
   schedule:
-    - cron: '30 0 * * *' # daily, 00:30 UTC = 6:00 AM IST
+    - cron: '30 4 * * *' # daily, 00:30 UTC = 6:00 AM IST
   workflow_dispatch: # allows manual triggering from the Actions tab too
 
 jobs:

@@ -44,7 +44,12 @@ function computeTimeoutMs(fileSizeBytes) {
 }
 
 async function primeOne(video) {
-  const url = signPhotoUrl(video.b2_key);
+  // Warm whichever file is ACTUALLY served for playback — once a proxy
+  // exists (web_video_key), that's what full_url points to, so warming the
+  // original instead would waste bandwidth/cache space on a file nobody's
+  // browser ever actually requests.
+  const keyToWarm = video.web_video_key || video.b2_key;
+  const url = signPhotoUrl(keyToWarm);
   const response = await fetch(url);
   if (!response.ok) throw new Error(`status ${response.status}`);
 
@@ -63,7 +68,7 @@ async function run() {
   // then oldest-warmed comes next — exactly the priority order wanted.
   const { data: candidates, error } = await supabase
     .from('photos')
-    .select('id, b2_key, file_size, cache_warmed_at')
+    .select('id, b2_key, web_video_key, file_size, cache_warmed_at')
     .eq('media_type', 'video')
     .or(`cache_warmed_at.is.null,cache_warmed_at.lt.${cutoff}`)
     .order('cache_warmed_at', { ascending: true, nullsFirst: true });
@@ -134,4 +139,3 @@ run()
     console.error('Cache warming failed:', err);
     process.exit(1);
   });
-
